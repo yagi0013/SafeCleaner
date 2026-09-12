@@ -1,0 +1,2 @@
+-keep class jp.yagi.safecleaner.accessibility.CleanerAccessibilityService { *; }
+-keep class jp.yagi.safecleaner.widget.** { *; }
