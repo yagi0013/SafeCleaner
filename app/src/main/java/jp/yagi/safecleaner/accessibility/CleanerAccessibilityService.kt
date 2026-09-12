@@ -14,7 +14,7 @@ import jp.yagi.safecleaner.model.CleanerMode
 import jp.yagi.safecleaner.model.InstalledApp
 import jp.yagi.safecleaner.model.OperationStage
 import jp.yagi.safecleaner.model.StepStatus
-import jp.yagi.safecleaner.model.shouldSkipAllBeforeOpeningSettings
+import jp.yagi.safecleaner.model.mergeCleanAllResults
 import jp.yagi.safecleaner.model.shouldSkipCacheBeforeOpeningSettings
 import jp.yagi.safecleaner.model.shouldSkipForceStopBeforeOpeningSettings
 import jp.yagi.safecleaner.model.toFixedTargetQueue
@@ -73,43 +73,47 @@ class CleanerAccessibilityService : AccessibilityService() {
         // is queried to add targets during the run, even if an app restarts after being handled.
         val queueSnapshot = targets.toFixedTargetQueue()
         AppLog.i("mode=$mode queue=START fixed_targets=${queueSnapshot.size}")
+        val results = if (mode == CleanerMode.CLEAN_ALL) {
+            AppLog.i("mode=$mode phase=FORCE_STOP start")
+            val forceStopResults = runPhase(CleanerMode.FORCE_STOP_ONLY, queueSnapshot, onProgress)
+            val cacheResults = if (cancelRequested) {
+                emptyList()
+            } else {
+                AppLog.i("mode=$mode phase=CLEAR_CACHE start")
+                runPhase(CleanerMode.CLEAR_CACHE_ONLY, queueSnapshot, onProgress)
+            }
+            mergeCleanAllResults(queueSnapshot, forceStopResults, cacheResults)
+        } else {
+            runPhase(mode, queueSnapshot, onProgress)
+        }
+        notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
+        return results
+    }
+
+    private suspend fun runPhase(
+        mode: CleanerMode,
+        queueSnapshot: List<InstalledApp>,
+        onProgress: (index: Int, app: InstalledApp, stage: OperationStage) -> Unit,
+    ): List<AppOperationResult> {
         val results = mutableListOf<AppOperationResult>()
-        val processedPackages = mutableSetOf<String>()
         for ((index, app) in queueSnapshot.withIndex()) {
             if (cancelRequested) break
-            if (!processedPackages.add(app.packageName)) {
-                AppLog.w("package=${app.packageName} operation=SKIP reason=DUPLICATE_IN_SESSION")
-                continue
-            }
             val skipCacheFromStats = shouldSkipCacheBeforeOpeningSettings(mode, app.cacheBytes)
-
-            if (shouldSkipAllBeforeOpeningSettings(mode, app.isStopped, app.cacheBytes)) {
-                progress(index, queueSnapshot.size, app, OperationStage.COMPLETE, onProgress)
-                AppLog.i("package=${app.packageName} operation=SKIP preflight=STOPPED_AND_ZERO_CACHE")
-                results += AppOperationResult(
-                    packageName = app.packageName,
-                    label = app.label,
-                    cacheStatus = StepStatus.SKIPPED,
-                    forceStopStatus = StepStatus.SKIPPED,
-                    failureReason = "キャッシュ0 Bかつ未起動または強制停止済みのため事前スキップ",
-                )
-                continue
-            }
 
             if (mode == CleanerMode.CLEAR_CACHE_ONLY && skipCacheFromStats) {
                 progress(index, queueSnapshot.size, app, OperationStage.CLEARING_CACHE, onProgress)
-                AppLog.i("package=${app.packageName} cache=SKIP preflight=ZERO_BYTES")
+                AppLog.i("package=${app.packageName} cache=SKIP preflight=BELOW_THRESHOLD")
                 results += AppOperationResult(
                     packageName = app.packageName,
                     label = app.label,
                     cacheStatus = StepStatus.SKIPPED,
-                    failureReason = "キャッシュ0 Bのため事前スキップ",
+                    failureReason = "キャッシュ1 MB未満のため事前スキップ",
                 )
                 continue
             }
 
-            // FLAG_STOPPED is a public, no-extra-permission signal. For force-stop-only runs this
-            // avoids opening Settings at all. CLEAN_ALL still opens storage for cache handling.
+            // FLAG_STOPPED is a public, no-extra-permission signal. It avoids opening Settings
+            // during both a standalone force-stop run and CLEAN_ALL's first phase.
             if (shouldSkipForceStopBeforeOpeningSettings(mode, app.isStopped)) {
                 progress(index, queueSnapshot.size, app, OperationStage.FORCE_STOPPING, onProgress)
                 AppLog.i("package=${app.packageName} force_stop=SKIP preflight=FLAG_STOPPED")
@@ -134,8 +138,8 @@ class CleanerAccessibilityService : AccessibilityService() {
                 } else {
                     if (skipCacheFromStats) {
                         cache = StepStatus.SKIPPED
-                        reasons += "キャッシュ0 Bのためキャッシュ画面をスキップ"
-                        AppLog.i("package=${app.packageName} cache=SKIP preflight=ZERO_BYTES")
+                        reasons += "キャッシュ1 MB未満のためキャッシュ画面をスキップ"
+                        AppLog.i("package=${app.packageName} cache=SKIP preflight=BELOW_THRESHOLD")
                     } else if (mode.needsCache && !cancelRequested) {
                         val result = cacheClearHandler.execute(
                             packageName = app.packageName,
@@ -173,7 +177,6 @@ class CleanerAccessibilityService : AccessibilityService() {
                 failureReason = reasons.takeIf { it.isNotEmpty() }?.joinToString(" / "),
             )
         }
-        notificationManager.cancel(PROGRESS_NOTIFICATION_ID)
         return results
     }
 

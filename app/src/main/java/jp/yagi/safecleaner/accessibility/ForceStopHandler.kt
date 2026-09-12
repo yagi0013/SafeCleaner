@@ -12,37 +12,33 @@ class ForceStopHandler(
     private val resolver: OemUiResolver,
 ) {
     private sealed interface PostClickState {
-        data class Confirmation(val node: AccessibilityNodeInfo) : PostClickState
+        data object Confirmation : PostClickState
         data object Disabled : PostClickState
     }
 
     suspend fun execute(packageName: String, onConfirming: () -> Unit): StepResult {
-        val candidate = service.awaitRoot(3_000) { navigator.findForceStop(it) } ?: return skipped(
+        val candidate = service.awaitRoot(5_000) { navigator.findForceStop(it) } ?: return skipped(
             packageName, "強制停止ボタンが見つかりません",
         )
         val button = NodeFinder.clickable(candidate) ?: return skipped(packageName, "強制停止ボタンを安全に押せません")
         if (!button.isEnabled) return StepResult(StepStatus.SKIPPED, "強制停止済み、またはボタンが無効です")
 
         AppLog.d("package=$packageName button=force_stop id=${candidate.viewIdResourceName} text=${candidate.text}")
-        if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+        val clicked = service.awaitRoot(2_000) { root ->
+            val freshButton = navigator.findForceStop(root)?.let(NodeFinder::clickable)
+                ?.takeIf { it.isEnabled } ?: return@awaitRoot null
+            true.takeIf { freshButton.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
+        } == true
+        if (!clicked) {
             return StepResult(StepStatus.FAILED, "強制停止ボタンの操作に失敗しました")
         }
         onConfirming()
 
         // Wait for either outcome in one event-driven loop. OEMs which stop immediately no longer
         // pay the full confirmation-dialog timeout before we inspect the disabled button.
-        val postClickState = service.awaitRoot(2_500) { root ->
-            val positive = NodeFinder.findByResourceSuffix(root, setOf("button1"))
-                ?: NodeFinder.findByExactLabel(root, resolver.confirmForceStopLabels)
-            val hasForceContext = NodeFinder.containsAnyLabel(root, resolver.forceStopLabels) ||
-                NodeFinder.containsAnyLabel(root, setOf("アプリを強制停止しますか？", "Force stop app?"))
-            val hasStandardDialogButtons =
-                NodeFinder.findByResourceSuffix(root, setOf("button1")) != null &&
-                    NodeFinder.findByResourceSuffix(root, setOf("button2")) != null
-            val containsDestructiveDataAction = NodeFinder.containsAnyLabel(root, resolver.destructiveDataLabels)
+        val postClickState = service.awaitRoot(5_000) { root ->
             when {
-                positive != null && (hasForceContext || hasStandardDialogButtons) &&
-                    !containsDestructiveDataAction -> PostClickState.Confirmation(positive)
+                findSafeConfirmation(root) != null -> PostClickState.Confirmation
                 navigator.findForceStop(root)?.let(NodeFinder::clickable)?.isEnabled == false ->
                     PostClickState.Disabled
                 else -> null
@@ -50,10 +46,15 @@ class ForceStopHandler(
         }
 
         when (postClickState) {
-            is PostClickState.Confirmation -> {
-                val confirmButton = NodeFinder.clickable(postClickState.node)
-                    ?: return StepResult(StepStatus.FAILED, "確認ダイアログを安全に操作できません")
-                if (!confirmButton.isEnabled || !confirmButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            PostClickState.Confirmation -> {
+                // Re-resolve on every attempt because OEM Settings often replaces dialog nodes
+                // between the accessibility event and the click.
+                val confirmed = service.awaitRoot(3_000) { root ->
+                    val confirmButton = findSafeConfirmation(root)?.let(NodeFinder::clickable)
+                        ?.takeIf { it.isEnabled } ?: return@awaitRoot null
+                    true.takeIf { confirmButton.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
+                } == true
+                if (!confirmed) {
                     return StepResult(StepStatus.FAILED, "強制停止の確認に失敗しました")
                 }
             }
@@ -66,6 +67,16 @@ class ForceStopHandler(
         service.awaitEventOrTimeout(400)
         AppLog.i("package=$packageName force_stop=SUCCESS")
         return StepResult(StepStatus.SUCCESS)
+    }
+
+    private fun findSafeConfirmation(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (NodeFinder.containsAnyLabel(root, resolver.destructiveDataLabels)) return null
+        val standardPositive = NodeFinder.findByResourceSuffix(root, setOf("button1"))
+        val hasStandardButtonPair = standardPositive != null &&
+            NodeFinder.findByResourceSuffix(root, setOf("button2")) != null
+        if (hasStandardButtonPair) return standardPositive
+        if (!NodeFinder.containsAnyLabel(root, resolver.forceStopDialogLabels)) return null
+        return NodeFinder.findByExactLabel(root, resolver.confirmForceStopLabels)
     }
 
     private fun skipped(packageName: String, reason: String): StepResult {

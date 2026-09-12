@@ -107,7 +107,7 @@ fun MainScreen(
                         )
                     }
                     if (usageAccessEnabled) {
-                        Text("キャッシュ0 Bのアプリは設定画面を開く前にスキップします。")
+                        Text("キャッシュ1 MB未満のアプリは設定画面を開く前にスキップします。")
                     } else {
                         Text("使用状況へのアクセスを許可すると、不要な設定画面の遷移を減らせます。")
                         FilledTonalButton(onClick = onOpenUsageAccess, Modifier.fillMaxWidth()) {

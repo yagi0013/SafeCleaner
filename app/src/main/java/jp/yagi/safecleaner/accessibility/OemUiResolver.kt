@@ -37,6 +37,11 @@ class OemUiResolver {
     val confirmForceStopLabels = setOf(
         "OK", "強制停止", "強制終了", "Force stop", "FORCE STOP",
     )
+    val forceStopDialogLabels = setOf(
+        "アプリを強制停止しますか？", "アプリを強制終了しますか？",
+        "このアプリを強制停止しますか？", "このアプリを強制終了しますか？",
+        "Force stop app?", "Force stop this app?",
+    )
 
     val destructiveDataLabels = setOf(
         "データを削除", "データを消去", "ストレージを消去", "すべてのデータを削除",

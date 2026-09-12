@@ -6,7 +6,7 @@
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Optional special access used only to skip packages whose cache is confirmed as 0 B. -->
+    <!-- Optional special access used to skip packages with confirmed cache below 1 MiB. -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />

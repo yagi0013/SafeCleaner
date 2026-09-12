@@ -70,6 +70,16 @@ class MainActivity : ComponentActivity() {
                     Screen.RESULT -> ResultScreen(
                         summary = cleanerState.lastSummary,
                         appRepository = app.appRepository,
+                        onOpenAppInfo = { targetPackage ->
+                            runCatching {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                        Uri.parse("package:$targetPackage"),
+                                    ),
+                                )
+                            }
+                        },
                         onBack = { screen = Screen.MAIN },
                     )
                 }

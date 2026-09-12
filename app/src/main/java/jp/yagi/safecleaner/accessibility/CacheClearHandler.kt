@@ -28,11 +28,7 @@ class CacheClearHandler(
             }
         }
 
-        val cacheCandidate = service.awaitRoot(6_000) { root ->
-            // Never proceed on a screen where only destructive data controls can be identified.
-            NodeFinder.findByResourceSuffix(root, resolver.clearCacheResourceSuffixes)
-                ?: NodeFinder.findByExactLabel(root, resolver.clearCacheLabels)
-        } ?: run {
+        val cacheCandidate = service.awaitRoot(10_000, ::findSafeClearCache) ?: run {
             onReturning()
             navigator.returnToAppInfo()
             return skipped(packageName, "キャッシュ削除ボタンが見つかりません")
@@ -48,19 +44,13 @@ class CacheClearHandler(
             return StepResult(StepStatus.SKIPPED, "キャッシュは空、またはボタンが無効です")
         }
 
-        // The clicked node itself must be positively identified as cache-only. Parent text is never used.
-        val positivelyCacheOnly = cacheCandidate.viewIdResourceName?.substringAfterLast('/') in
-            resolver.clearCacheResourceSuffixes ||
-            cacheCandidate.text?.toString()?.trim() in resolver.clearCacheLabels ||
-            cacheCandidate.contentDescription?.toString()?.trim() in resolver.clearCacheLabels
-        if (!positivelyCacheOnly || NodeFinder.containsAnyLabel(cacheCandidate, resolver.destructiveDataLabels)) {
-            onReturning(); navigator.returnToAppInfo()
-            return skipped(packageName, "キャッシュのみの操作と断定できません")
-        }
-
         onClearing()
         AppLog.d("package=$packageName button=clear_cache id=${cacheCandidate.viewIdResourceName} text=${cacheCandidate.text}")
-        val clicked = cacheButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        val clicked = service.awaitRoot(3_000) { root ->
+            val freshButton = findSafeClearCache(root)?.let(NodeFinder::clickable)
+                ?.takeIf { it.isEnabled } ?: return@awaitRoot null
+            true.takeIf { freshButton.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
+        } == true
         service.awaitEventOrTimeout(500)
         onReturning()
         val returned = navigator.returnToAppInfo()
@@ -68,6 +58,20 @@ class CacheClearHandler(
             !clicked -> StepResult(StepStatus.FAILED, "キャッシュ削除ボタンの操作に失敗しました")
             !returned -> StepResult(StepStatus.FAILED, "アプリ情報画面へ戻れません")
             else -> StepResult(StepStatus.SUCCESS).also { AppLog.i("package=$packageName cache=SUCCESS") }
+        }
+    }
+
+    private fun findSafeClearCache(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        val candidate = NodeFinder.findByResourceSuffix(root, resolver.clearCacheResourceSuffixes)
+            ?: NodeFinder.findByExactLabel(root, resolver.clearCacheLabels)
+            ?: return null
+        // The selected node itself must identify cache-only; parent text is never accepted.
+        val positivelyCacheOnly = candidate.viewIdResourceName?.substringAfterLast('/') in
+            resolver.clearCacheResourceSuffixes ||
+            candidate.text?.toString()?.trim() in resolver.clearCacheLabels ||
+            candidate.contentDescription?.toString()?.trim() in resolver.clearCacheLabels
+        return candidate.takeIf {
+            positivelyCacheOnly && !NodeFinder.containsAnyLabel(candidate, resolver.destructiveDataLabels)
         }
     }
 

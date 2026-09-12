@@ -10,9 +10,11 @@ data class InstalledApp(
     /** Android package stopped state: never launched since install, or explicitly force-stopped. */
     val isStopped: Boolean,
     val uid: Int,
-    /** Null means unavailable or not yet queried; only an exact zero is safe to preflight-skip. */
+    /** Null means unavailable or not yet queried; known values below the threshold are skipped. */
     val cacheBytes: Long? = null,
 )
+
+const val MIN_CACHE_BYTES_TO_CLEAR: Long = 1024L * 1024L
 
 /**
  * Creates the immutable package queue used for one cleaning session.
@@ -36,10 +38,7 @@ fun shouldSkipForceStopBeforeOpeningSettings(mode: CleanerMode, isStopped: Boole
     mode == CleanerMode.FORCE_STOP_ONLY && isStopped
 
 fun shouldSkipCacheBeforeOpeningSettings(mode: CleanerMode, cacheBytes: Long?): Boolean =
-    mode.needsCache && cacheBytes == 0L
-
-fun shouldSkipAllBeforeOpeningSettings(mode: CleanerMode, isStopped: Boolean, cacheBytes: Long?): Boolean =
-    mode == CleanerMode.CLEAN_ALL && isStopped && cacheBytes == 0L
+    mode.needsCache && cacheBytes != null && cacheBytes < MIN_CACHE_BYTES_TO_CLEAR
 
 enum class CleanerStatus {
     READY,
@@ -64,6 +63,8 @@ enum class OperationStage {
 
 enum class StepStatus { NOT_REQUESTED, SUCCESS, SKIPPED, FAILED }
 
+enum class AppResultCategory { SUCCESS, SKIPPED, FAILED }
+
 data class AppOperationResult(
     val packageName: String,
     val label: String,
@@ -75,6 +76,37 @@ data class AppOperationResult(
         get() = (cacheStatus == StepStatus.SUCCESS || forceStopStatus == StepStatus.SUCCESS) &&
             cacheStatus != StepStatus.FAILED && forceStopStatus != StepStatus.FAILED &&
             cacheStatus != StepStatus.SKIPPED && forceStopStatus != StepStatus.SKIPPED
+
+    val category: AppResultCategory
+        get() = when {
+            cacheStatus == StepStatus.FAILED || forceStopStatus == StepStatus.FAILED -> AppResultCategory.FAILED
+            succeeded -> AppResultCategory.SUCCESS
+            else -> AppResultCategory.SKIPPED
+        }
+}
+
+fun mergeCleanAllResults(
+    queueSnapshot: List<InstalledApp>,
+    forceStopResults: List<AppOperationResult>,
+    cacheResults: List<AppOperationResult>,
+): List<AppOperationResult> {
+    val forceByPackage = forceStopResults.associateBy(AppOperationResult::packageName)
+    val cacheByPackage = cacheResults.associateBy(AppOperationResult::packageName)
+    return queueSnapshot.mapNotNull { app ->
+        val force = forceByPackage[app.packageName]
+        val cache = cacheByPackage[app.packageName]
+        if (force == null && cache == null) return@mapNotNull null
+        AppOperationResult(
+            packageName = app.packageName,
+            label = app.label,
+            cacheStatus = cache?.cacheStatus ?: StepStatus.NOT_REQUESTED,
+            forceStopStatus = force?.forceStopStatus ?: StepStatus.NOT_REQUESTED,
+            failureReason = listOfNotNull(force?.failureReason, cache?.failureReason)
+                .distinct()
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(" / "),
+        )
+    }
 }
 
 data class RunSummary(
@@ -89,15 +121,11 @@ data class RunSummary(
     val availableRamBefore: Long,
     val availableRamAfter: Long,
 ) {
-    val successCount get() = results.count(AppOperationResult::succeeded)
+    val successCount get() = results.count { it.category == AppResultCategory.SUCCESS }
     val forceStopSuccessCount get() = results.count { it.forceStopStatus == StepStatus.SUCCESS }
     val cacheSuccessCount get() = results.count { it.cacheStatus == StepStatus.SUCCESS }
-    val skippedCount get() = results.count {
-        it.cacheStatus == StepStatus.SKIPPED || it.forceStopStatus == StepStatus.SKIPPED
-    }
-    val failedCount get() = results.count {
-        it.cacheStatus == StepStatus.FAILED || it.forceStopStatus == StepStatus.FAILED
-    }
+    val skippedCount get() = results.count { it.category == AppResultCategory.SKIPPED }
+    val failedCount get() = results.count { it.category == AppResultCategory.FAILED }
 }
 
 data class CleanerUiState(

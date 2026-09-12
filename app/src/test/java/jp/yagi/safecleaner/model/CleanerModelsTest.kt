@@ -23,20 +23,13 @@ class CleanerModelsTest {
     }
 
     @Test
-    fun `only confirmed zero cache can skip cache navigation`() {
+    fun `known cache below one MiB skips cache navigation`() {
         assertTrue(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAN_ALL, 0L))
-        assertTrue(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, 0L))
+        assertTrue(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, MIN_CACHE_BYTES_TO_CLEAR - 1L))
         assertFalse(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, null))
-        assertFalse(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, 1L))
+        assertFalse(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, MIN_CACHE_BYTES_TO_CLEAR))
+        assertFalse(shouldSkipCacheBeforeOpeningSettings(CleanerMode.CLEAR_CACHE_ONLY, MIN_CACHE_BYTES_TO_CLEAR + 1L))
         assertFalse(shouldSkipCacheBeforeOpeningSettings(CleanerMode.FORCE_STOP_ONLY, 0L))
-    }
-
-    @Test
-    fun `clean all skips every setting screen only when stopped and cache is zero`() {
-        assertTrue(shouldSkipAllBeforeOpeningSettings(CleanerMode.CLEAN_ALL, true, 0L))
-        assertFalse(shouldSkipAllBeforeOpeningSettings(CleanerMode.CLEAN_ALL, false, 0L))
-        assertFalse(shouldSkipAllBeforeOpeningSettings(CleanerMode.CLEAN_ALL, true, null))
-        assertFalse(shouldSkipAllBeforeOpeningSettings(CleanerMode.CLEAN_ALL, true, 10L))
     }
 
     @Test
@@ -51,6 +44,30 @@ class CleanerModelsTest {
 
         assertEquals(listOf("a", "b"), snapshot.map(InstalledApp::packageName))
         assertEquals("A", snapshot.first().label)
+    }
+
+    @Test
+    fun `clean all combines force stop phase followed by cache phase`() {
+        val apps = listOf(
+            InstalledApp("a", "A", null, isStopped = false, uid = 1),
+            InstalledApp("b", "B", null, isStopped = false, uid = 2),
+        )
+        val forceResults = listOf(
+            AppOperationResult("a", "A", forceStopStatus = StepStatus.SUCCESS),
+            AppOperationResult("b", "B", forceStopStatus = StepStatus.SKIPPED, failureReason = "already stopped"),
+        )
+        val cacheResults = listOf(
+            AppOperationResult("a", "A", cacheStatus = StepStatus.SUCCESS),
+            AppOperationResult("b", "B", cacheStatus = StepStatus.SKIPPED, failureReason = "below threshold"),
+        )
+
+        val combined = mergeCleanAllResults(apps, forceResults, cacheResults)
+
+        assertEquals(StepStatus.SUCCESS, combined[0].forceStopStatus)
+        assertEquals(StepStatus.SUCCESS, combined[0].cacheStatus)
+        assertEquals(StepStatus.SKIPPED, combined[1].forceStopStatus)
+        assertEquals(StepStatus.SKIPPED, combined[1].cacheStatus)
+        assertEquals("already stopped / below threshold", combined[1].failureReason)
     }
 
     @Test
@@ -73,5 +90,16 @@ class CleanerModelsTest {
         assertEquals(1, summary.successCount)
         assertEquals(1, summary.skippedCount)
         assertEquals(1, summary.failedCount)
+    }
+
+    @Test
+    fun `result categories are mutually exclusive and failure takes priority`() {
+        val success = AppOperationResult("a", "A", StepStatus.SUCCESS, StepStatus.SUCCESS)
+        val skipped = AppOperationResult("b", "B", StepStatus.SKIPPED, StepStatus.SUCCESS)
+        val failedAndSkipped = AppOperationResult("c", "C", StepStatus.FAILED, StepStatus.SKIPPED)
+
+        assertEquals(AppResultCategory.SUCCESS, success.category)
+        assertEquals(AppResultCategory.SKIPPED, skipped.category)
+        assertEquals(AppResultCategory.FAILED, failedAndSkipped.category)
     }
 }

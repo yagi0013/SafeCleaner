@@ -12,8 +12,8 @@ android {
         applicationId = "jp.yagi.safecleaner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.2.1"
+        versionCode = 10
+        versionName = "1.2.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

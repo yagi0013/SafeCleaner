@@ -18,8 +18,10 @@ internal object NodeFinder {
 
     fun containsAnyLabel(root: AccessibilityNodeInfo?, labels: Set<String>): Boolean =
         walk(root).any { node ->
-            node.text?.toString()?.trim() in labels ||
-                node.contentDescription?.toString()?.trim() in labels
+            node.isVisibleToUser && (
+                node.text?.toString()?.trim() in labels ||
+                    node.contentDescription?.toString()?.trim() in labels
+                )
         }
 
     fun clickable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {

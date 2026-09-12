@@ -5,7 +5,7 @@
     <string name="widget_clean_all_name">一括クリーン</string>
     <string name="widget_force_stop_name">一括終了</string>
     <string name="widget_clear_cache_name">キャッシュクリーン</string>
-    <string name="widget_clean_all_description">キャッシュ削除と強制停止を直接開始します</string>
+    <string name="widget_clean_all_description">全対象の強制停止後にキャッシュ削除を開始します</string>
     <string name="widget_force_stop_description">強制停止のみを直接開始します</string>
     <string name="widget_clear_cache_description">キャッシュ削除のみを直接開始します</string>
 </resources>
