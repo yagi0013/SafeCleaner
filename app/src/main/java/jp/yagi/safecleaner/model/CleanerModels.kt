@@ -73,14 +73,12 @@ data class AppOperationResult(
     val failureReason: String? = null,
 ) {
     val succeeded: Boolean
-        get() = (cacheStatus == StepStatus.SUCCESS || forceStopStatus == StepStatus.SUCCESS) &&
-            cacheStatus != StepStatus.FAILED && forceStopStatus != StepStatus.FAILED &&
-            cacheStatus != StepStatus.SKIPPED && forceStopStatus != StepStatus.SKIPPED
+        get() = cacheStatus == StepStatus.SUCCESS || forceStopStatus == StepStatus.SUCCESS
 
     val category: AppResultCategory
         get() = when {
-            cacheStatus == StepStatus.FAILED || forceStopStatus == StepStatus.FAILED -> AppResultCategory.FAILED
             succeeded -> AppResultCategory.SUCCESS
+            cacheStatus == StepStatus.FAILED || forceStopStatus == StepStatus.FAILED -> AppResultCategory.FAILED
             else -> AppResultCategory.SKIPPED
         }
 }

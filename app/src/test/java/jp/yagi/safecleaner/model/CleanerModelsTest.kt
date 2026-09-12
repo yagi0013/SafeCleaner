@@ -71,7 +71,7 @@ class CleanerModelsTest {
     }
 
     @Test
-    fun `summary separates skipped and failed`() {
+    fun `summary counts an app as successful when either requested operation succeeds`() {
         val summary = RunSummary(
             mode = CleanerMode.CLEAN_ALL,
             startedAtMillis = 0,
@@ -87,19 +87,21 @@ class CleanerModelsTest {
             availableRamBefore = 1,
             availableRamAfter = 2,
         )
-        assertEquals(1, summary.successCount)
-        assertEquals(1, summary.skippedCount)
-        assertEquals(1, summary.failedCount)
+        assertEquals(3, summary.successCount)
+        assertEquals(0, summary.skippedCount)
+        assertEquals(0, summary.failedCount)
     }
 
     @Test
-    fun `result categories are mutually exclusive and failure takes priority`() {
+    fun `result categories are mutually exclusive and success takes priority`() {
         val success = AppOperationResult("a", "A", StepStatus.SUCCESS, StepStatus.SUCCESS)
-        val skipped = AppOperationResult("b", "B", StepStatus.SKIPPED, StepStatus.SUCCESS)
+        val successAndSkipped = AppOperationResult("b", "B", StepStatus.SKIPPED, StepStatus.SUCCESS)
+        val successAndFailed = AppOperationResult("c", "C", StepStatus.FAILED, StepStatus.SUCCESS)
         val failedAndSkipped = AppOperationResult("c", "C", StepStatus.FAILED, StepStatus.SKIPPED)
 
         assertEquals(AppResultCategory.SUCCESS, success.category)
-        assertEquals(AppResultCategory.SKIPPED, skipped.category)
+        assertEquals(AppResultCategory.SUCCESS, successAndSkipped.category)
+        assertEquals(AppResultCategory.SUCCESS, successAndFailed.category)
         assertEquals(AppResultCategory.FAILED, failedAndSkipped.category)
     }
 }

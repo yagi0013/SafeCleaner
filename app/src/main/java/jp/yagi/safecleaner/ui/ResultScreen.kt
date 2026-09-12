@@ -140,10 +140,10 @@ fun ResultScreen(
 private data class ResultTab(val label: String, val category: AppResultCategory, val count: Int)
 
 private fun AppOperationResult.detailText(): String {
-    failureReason?.let { return it }
     return buildList {
         if (forceStopStatus != StepStatus.NOT_REQUESTED) add("強制停止：${forceStopStatus.label}")
         if (cacheStatus != StepStatus.NOT_REQUESTED) add("キャッシュ：${cacheStatus.label}")
+        failureReason?.let { add("詳細：$it") }
     }.joinToString(" / ").ifEmpty { "処理情報なし" }
 }
 

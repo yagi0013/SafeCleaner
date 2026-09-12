@@ -38,6 +38,18 @@ class CacheStatsRepository(private val context: Context) {
         return mode == AppOpsManager.MODE_ALLOWED
     }
 
+    /** Fresh per-package measurement for post-click verification; unavailable is not success. */
+    suspend fun cacheBytesForPackage(packageName: String): Long? {
+        if (!hasUsageAccess()) return null
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                storageStatsManager.queryStatsForPackage(
+                    StorageManager.UUID_DEFAULT, packageName, Process.myUserHandle(),
+                ).cacheBytes
+            }.getOrNull()
+        }
+    }
+
     /**
      * Queries each UID once; queryStatsForUid is normally faster than per-package calculation.
      * A shared UID may over-report but never causes an unsafe skip: only an exact aggregate zero skips.

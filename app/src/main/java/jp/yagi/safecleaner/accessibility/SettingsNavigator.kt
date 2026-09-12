@@ -13,8 +13,22 @@ class SettingsNavigator(
     private val resolver: OemUiResolver,
 ) {
     private val packageManager get() = service.packageManager
+    private var targetPackage: String? = null
+    private var targetLabel: String? = null
+    private var navigationEventVersion = 0L
+    var lastAppInfoFailureReason: String = "アプリ情報画面：未確認"
+        private set
+    private val labelOwners by lazy {
+        @Suppress("DEPRECATION")
+        packageManager.getInstalledApplications(0).groupBy {
+            packageManager.getApplicationLabel(it).toString().trim()
+        }.mapValues { (_, apps) -> apps.map { it.packageName }.toSet() }
+    }
 
-    fun openAppInfo(packageName: String) {
+    fun openAppInfo(packageName: String, label: String) {
+        targetPackage = packageName
+        targetLabel = label.trim()
+        markNavigation()
         AppLog.d("package=$packageName stage=${OperationStage.OPENING_APP_INFO}")
         service.startActivity(
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
@@ -22,15 +36,65 @@ class SettingsNavigator(
         )
     }
 
-    suspend fun awaitAppInfo(timeoutMs: Long = 7_000): Boolean = service.awaitRoot(timeoutMs) { root ->
-        isSettingsRoot(root) && (
-            findForceStop(root) != null || findStorage(root) != null
-        )
-    } != null
+    suspend fun awaitAppInfo(timeoutMs: Long = 7_000): Boolean {
+        var fresh = false
+        var trusted = false
+        var identity = false
+        var controls = false
+        AppLog.i("package=$targetPackage operation=navigation stage=app_info_wait status=START")
+        val ready = service.awaitRoot(timeoutMs) { root ->
+            fresh = hasFreshSettingsEvent()
+            trusted = isSettingsRoot(root)
+            identity = trusted && matchesTarget(root)
+            controls = (findForceStop(root) != null ||
+                findStorage(root)?.let(NodeFinder::clickable) != null) &&
+                NodeFinder.findByResourceSuffix(root, resolver.clearCacheResourceSuffixes) == null &&
+                NodeFinder.findByExactLabel(root, resolver.clearCacheLabels) == null
+            appInfoReady(
+                freshSettingsEvent = fresh,
+                trustedRoot = trusted,
+                matchesTarget = identity,
+                hasControls = controls,
+            )
+        } != null
+        lastAppInfoFailureReason = when {
+            ready -> ""
+            !trusted -> "アプリ情報画面：Settingsの画面を確認できません"
+            !fresh -> "アプリ情報画面：遷移後のSettingsイベントを確認できません"
+            !identity -> "アプリ情報画面：対象アプリの一致を確認できません"
+            else -> "アプリ情報画面：対象アプリは一致しましたが、操作項目を確認できません"
+        }
+        AppLog.i("package=$targetPackage operation=navigation stage=app_info_wait confirmed=$ready fresh_event=$fresh trusted_root=$trusted target_match=$identity controls=$controls reason=${lastAppInfoFailureReason.ifEmpty { "none" }}")
+        return ready
+    }
+
+    fun markNavigation() { navigationEventVersion = service.settingsEventVersion }
+    fun hasFreshSettingsEvent(): Boolean = service.settingsEventVersion > navigationEventVersion
+
+    /** Package text, or a unique installed-app label, must identify the requested app. */
+    private fun matchesTarget(root: AccessibilityNodeInfo?): Boolean {
+        val packageName = targetPackage ?: return false
+        if (NodeFinder.findByExactLabel(root, setOf(packageName)) != null) return true
+        val label = targetLabel?.takeIf { it.isNotBlank() } ?: return false
+        return labelOwners[label] == setOf(packageName) &&
+            NodeFinder.findByExactLabel(root, setOf(label)) != null
+    }
+
+    fun isTargetAppInfo(root: AccessibilityNodeInfo?): Boolean =
+        isSettingsRoot(root) && matchesTarget(root)
+
+    fun isPackageStopped(packageName: String): Boolean {
+        @Suppress("DEPRECATION")
+        return runCatching {
+            packageManager.getApplicationInfo(packageName, 0).flags and
+                android.content.pm.ApplicationInfo.FLAG_STOPPED != 0
+        }.getOrDefault(false)
+    }
 
     fun findStorage(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
-        NodeFinder.findByResourceSuffix(root, resolver.storageResourceSuffixes)
-            ?: NodeFinder.findByExactLabel(root, resolver.storageLabels)
+        if (!isTargetAppInfo(root)) null else
+            NodeFinder.findByResourceSuffix(root, resolver.storageResourceSuffixes)
+                ?: NodeFinder.findByExactLabel(root, resolver.storageLabels)
 
     /**
      * Android 15/16 AOSP exposes a dedicated exported storage activity. It is not a public SDK
@@ -49,6 +113,7 @@ class SettingsNavigator(
         if (!resolver.isTrustedSettingsPackage(settingsPackage)) return false
         intent.setPackage(settingsPackage)
         return runCatching {
+            markNavigation()
             service.startActivity(intent)
             AppLog.d("package=$packageName navigation=direct_app_storage settings=$settingsPackage")
             true
@@ -70,15 +135,20 @@ class SettingsNavigator(
     }
 
     fun findForceStop(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? =
-        NodeFinder.findByResourceSuffix(root, resolver.forceStopResourceSuffixes)
-            ?: NodeFinder.findByExactLabel(root, resolver.forceStopLabels)
+        if (!isTargetAppInfo(root)) null else
+            NodeFinder.findByResourceSuffix(root, resolver.forceStopResourceSuffixes)
+                ?: NodeFinder.findByExactLabel(root, resolver.forceStopLabels)
 
     suspend fun returnToAppInfo(): Boolean {
-        service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-        return awaitAppInfo(5_000)
+        markNavigation()
+        val accepted = service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+        AppLog.i("package=$targetPackage operation=navigation stage=back accepted=$accepted")
+        val confirmed = accepted && awaitAppInfo(5_000)
+        AppLog.i("package=$targetPackage operation=navigation stage=return_app_info confirmed=$confirmed")
+        return confirmed
     }
 
-    private fun isSettingsRoot(root: AccessibilityNodeInfo?): Boolean {
+    internal fun isSettingsRoot(root: AccessibilityNodeInfo?): Boolean {
         val packageName = root?.packageName?.toString() ?: return false
         return resolver.isTrustedSettingsPackage(packageName)
     }

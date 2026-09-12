@@ -32,6 +32,9 @@ class CleanerAccessibilityService : AccessibilityService() {
     private val forceStopHandler by lazy { ForceStopHandler(this, navigator, resolver) }
     private val cacheClearHandler by lazy { CacheClearHandler(this, navigator, resolver) }
     @Volatile private var cancelRequested = false
+    internal var settingsEventVersion: Long = 0
+        private set
+    internal val isCancellationRequested get() = cancelRequested
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -42,6 +45,11 @@ class CleanerAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.packageName?.toString()?.let(resolver::isTrustedSettingsPackage) == true &&
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)) {
+            settingsEventVersion++
+        }
         AppLog.d(
             "event=${AccessibilityEvent.eventTypeToString(event.eventType)} " +
                 "package=${event.packageName} class=${event.className}",
@@ -130,9 +138,9 @@ class CleanerAccessibilityService : AccessibilityService() {
             val reasons = mutableListOf<String>()
             try {
                 progress(index, queueSnapshot.size, app, OperationStage.OPENING_APP_INFO, onProgress)
-                navigator.openAppInfo(app.packageName)
+                navigator.openAppInfo(app.packageName, app.label)
                 if (!navigator.awaitAppInfo()) {
-                    reasons += "アプリ情報画面を確認できません"
+                    reasons += navigator.lastAppInfoFailureReason
                     if (mode.needsCache) cache = StepStatus.FAILED
                     if (mode.needsForceStop) force = StepStatus.FAILED
                 } else {
@@ -175,8 +183,15 @@ class CleanerAccessibilityService : AccessibilityService() {
                 packageName = app.packageName, label = app.label,
                 cacheStatus = cache, forceStopStatus = force,
                 failureReason = reasons.takeIf { it.isNotEmpty() }?.joinToString(" / "),
-            )
+            ).also { result ->
+                AppLog.i(
+                    "package=${result.packageName} phase=$mode result=${result.category} " +
+                        "force_stop=${result.forceStopStatus} cache=${result.cacheStatus} " +
+                        "reason=${result.failureReason ?: "none"}",
+                )
+            }
         }
+        AppLog.i("mode=$mode phase=END processed=${results.size}/${queueSnapshot.size}")
         return results
     }
 
