@@ -1,8 +1,17 @@
 *.iml
 .gradle/
+.kotlin/
 /local.properties
 /.idea/
 **/build/
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Signing credentials and locally produced packages must never be committed.
+*.jks
+*.keystore
+*.p12
+*.pem
+keystore.properties
+dist/*.apk

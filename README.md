@@ -1,5 +1,8 @@
 # セーフクリーナー
 
+[![Android CI](https://github.com/yagi0013/SafeCleaner/actions/workflows/android.yml/badge.svg)](https://github.com/yagi0013/SafeCleaner/actions/workflows/android.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ROOT、Shizuku、ADB、shell コマンドを使わず、Android の設定画面をユーザー補助サービスで操作して、ユーザーがインストールしたアプリの「キャッシュのみ削除」と「強制停止」を順番に実行する Android アプリです。処理中は設定画面が前面に表示され、どの操作が行われているか確認できます。
 
 ## 機能
@@ -56,19 +59,27 @@ Android は通常アプリに、他アプリの強制停止やキャッシュ削
 - 不明な画面、無効なボタン、タイムアウトは誤操作せずスキップします。
 - システムアプリを対象にせず、重要なユーザーアプリも自動保護します。
 
+## インストール
+
+最新版は [GitHub Releases](https://github.com/yagi0013/SafeCleaner/releases/latest) からAPKをダウンロードしてください。GitHub外で再配布されたAPKではなく、Releaseページに記載されたSHA-256と一致することを確認してください。
+
+現在配布しているAPKは、既存バージョンから更新できるよう同一の開発用鍵で署名した開発用ビルドです。Google Play向けの正式なリリース署名ではありません。インストール時はAndroidの「不明なアプリのインストール」許可が必要です。
+
 ## ビルド
 
 Android Studioでルートディレクトリを開くか、JDK 17以降とAndroid SDK 35を用意して次を実行します。
 
-```powershell
-.\gradlew.bat assembleDebug testDebugUnitTest lintDebug
+```bash
+./gradlew assembleDebug testDebugUnitTest lintDebug
 ```
+
+Windowsでは `gradlew.bat` を使用してください。
 
 Windows版Gradleでプロジェクトの絶対パスに日本語が含まれる場合、JVMテストランナーがテストクラスを読めないことがあります。その場合はプロジェクトをASCII文字だけのパスに置くか、`subst` で一時ドライブへ割り当ててテストしてください。Androidアプリ本体のビルドには `android.overridePathCheck=true` を設定済みです。
 
 ### 端末へインストールするAPK
 
-`dist/SafeCleaner-v1.2.9-install.apk` を使用してください。これはv1.2.8以前と同じ鍵で署名し、署名と整合性を確認済みの開発用APKです。既存版に上書きインストールできます。`app/build/outputs/apk/release/app-release-unsigned.apk` は未署名の中間成果物なので、そのまま端末へインストールできません。
+[v1.2.9 Release](https://github.com/yagi0013/SafeCleaner/releases/tag/v1.2.9) の `SafeCleaner-v1.2.9-install.apk` を使用してください。これはv1.2.8以前と同じ鍵で署名し、署名と整合性を確認済みの開発用APKです。既存版に上書きインストールできます。`app/build/outputs/apk/release/app-release-unsigned.apk` は未署名の中間成果物なので、そのまま端末へインストールできません。
 
 v1.2.9では新しいAndroid・ColorOSのSettings画面で大量に発生するイベントの処理負荷を抑えました。強制停止後は `FLAG_STOPPED` に加え、対象画面の新しい更新でボタンが無効化された場合も完了と判定します。キャッシュ削除後の容量照会は250 msごとの連続実行をやめ、段階的に間隔を広げて端末負荷を減らしました。
 
@@ -105,3 +116,11 @@ adb logcat -v threadtime SafeCleaner:V '*:S' > safe-cleaner-log.txt
 - `SettingsNavigator` / `ForceStopHandler` / `CacheClearHandler`: 設定画面操作
 - `OemUiResolver`: OEM差異を分離した安全な語彙とresource-id
 - `widget`: Glanceウィジェットと直接実行入口
+
+## セキュリティ
+
+脆弱性は公開Issueではなく、[セキュリティポリシー](SECURITY.md) に沿って非公開で報告してください。
+
+## ライセンス
+
+このプロジェクトは [MIT License](LICENSE) で公開しています。依存ライブラリとGradle Wrapperには、それぞれのライセンスが適用されます。
