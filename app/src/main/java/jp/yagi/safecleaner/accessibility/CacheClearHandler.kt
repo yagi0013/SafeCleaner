@@ -4,9 +4,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import jp.yagi.safecleaner.model.StepStatus
 import jp.yagi.safecleaner.util.AppLog
 import jp.yagi.safecleaner.data.CacheStatsRepository
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 class CacheClearHandler(
     private val service: CleanerAccessibilityService,
@@ -59,7 +58,8 @@ class CacheClearHandler(
         }
 
         onClearing()
-        val beforeBytes = cacheStats.cacheBytesForPackage(packageName)
+        val canMeasureCache = cacheStats.hasUsageAccess()
+        val beforeBytes = if (canMeasureCache) cacheStats.cacheBytesForPackage(packageName) else null
         AppLog.d("package=$packageName button=clear_cache id=${cacheCandidate.viewIdResourceName} text=${cacheCandidate.text}")
         val clickEventVersion = service.settingsEventVersion
         val clicked = service.awaitRoot(3_000) { root ->
@@ -68,24 +68,61 @@ class CacheClearHandler(
             true.takeIf { freshButton.performAction(AccessibilityNodeInfo.ACTION_CLICK) }
         } == true
         AppLog.i("package=$packageName operation=cache stage=click accepted=$clicked")
-        val verified = clicked && withTimeoutOrNull(7_000) {
-            while (!service.isCancellationRequested) {
-                val disabled = findSafeClearCache(service.rootInActiveWindow)
-                    ?.let(NodeFinder::clickable)?.isEnabled == false &&
-                    service.settingsEventVersion > clickEventVersion
-                val afterBytes = cacheStats.cacheBytesForPackage(packageName)
-                if (cacheClearVerified(beforeBytes, afterBytes, disabled)) {
-                    AppLog.i("package=$packageName cache=VERIFIED before=$beforeBytes after=$afterBytes disabled=$disabled")
-                    return@withTimeoutOrNull true
-                }
-                delay(250)
-            }
-            false
-        } == true
+        val verified = clicked && awaitCacheClearCompletion(
+            packageName = packageName,
+            beforeBytes = beforeBytes,
+            canMeasureCache = canMeasureCache,
+            clickEventVersion = clickEventVersion,
+        )
         AppLog.i("package=$packageName operation=cache stage=completion verified=$verified")
         onReturning()
         val returned = restoreAppInfo(packageName)
         return recordStep(packageName, "cache", "result", cacheOperationResult(clicked, verified, returned))
+    }
+
+    private suspend fun awaitCacheClearCompletion(
+        packageName: String,
+        beforeBytes: Long?,
+        canMeasureCache: Boolean,
+        clickEventVersion: Long,
+    ): Boolean {
+        val deadline = android.os.SystemClock.uptimeMillis() + 7_000
+        var statsIntervalMs = 500L
+        var nextStatsAt = android.os.SystemClock.uptimeMillis() + 400L
+        while (!service.isCancellationRequested) {
+            val disabled = findSafeClearCache(service.rootInActiveWindow)
+                ?.let(NodeFinder::clickable)?.isEnabled == false &&
+                service.settingsEventVersion > clickEventVersion
+            if (cacheClearVerified(beforeBytes, null, disabled)) {
+                AppLog.i("package=$packageName cache=VERIFIED before=$beforeBytes after=not_queried disabled=true")
+                return true
+            }
+
+            val now = android.os.SystemClock.uptimeMillis()
+            if (now >= deadline) return false
+            if (canMeasureCache && now >= nextStatsAt) {
+                val afterBytes = cacheStats.cacheBytesForPackage(packageName)
+                if (cacheClearVerified(beforeBytes, afterBytes, false)) {
+                    AppLog.i("package=$packageName cache=VERIFIED before=$beforeBytes after=$afterBytes disabled=false")
+                    return true
+                }
+                nextStatsAt = android.os.SystemClock.uptimeMillis() + statsIntervalMs
+                statsIntervalMs = minOf(statsIntervalMs * 2, 2_000L)
+            }
+
+            val remaining = deadline - android.os.SystemClock.uptimeMillis()
+            if (remaining <= 0) return false
+            val untilStats = if (canMeasureCache) {
+                (nextStatsAt - android.os.SystemClock.uptimeMillis()).coerceAtLeast(1L)
+            } else {
+                500L
+            }
+            service.awaitEventOrTimeout(minOf(remaining, untilStats, 500L))
+            // A continuously animating Settings screen may emit events every frame. Keep those
+            // bursts from turning verification into a tight hierarchy-walk loop.
+            delay(minOf(50L, remaining))
+        }
+        return false
     }
 
     private suspend fun restoreAppInfo(packageName: String): Boolean {

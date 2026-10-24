@@ -61,4 +61,17 @@ class UiVerificationTest {
         assertFalse(cacheClearVerified(100L, null, false))
         assertFalse(cacheClearVerified(100L, -1L, false))
     }
+
+    @Test
+    fun `force stop accepts package flag or a fresh disabled target button`() {
+        assertTrue(forceStopVerified(true, false, false, false))
+        assertTrue(forceStopVerified(false, true, true, true))
+    }
+
+    @Test
+    fun `force stop rejects stale disabled or wrong app screens`() {
+        assertFalse(forceStopVerified(false, false, true, true))
+        assertFalse(forceStopVerified(false, true, false, true))
+        assertFalse(forceStopVerified(false, true, true, false))
+    }
 }

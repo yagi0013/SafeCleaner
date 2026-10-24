@@ -8,12 +8,28 @@ android {
     namespace = "jp.yagi.safecleaner"
     compileSdk = 35
 
+    // Keep update compatibility with the APKs produced on the previous OS without committing the
+    // private key. Other environments safely fall back to their normal Android debug keystore.
+    val legacyDebugKeystore = file(
+        "${System.getProperty("user.home")}/.android/safecleaner-legacy-debug.keystore",
+    )
+    val legacyDebugSigning = if (legacyDebugKeystore.isFile) {
+        signingConfigs.create("legacyDebug") {
+            storeFile = legacyDebugKeystore
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    } else {
+        null
+    }
+
     defaultConfig {
         applicationId = "jp.yagi.safecleaner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.2.8"
+        versionCode = 14
+        versionName = "1.2.9"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -30,6 +46,7 @@ android {
         }
         debug {
             buildConfigField("boolean", "ENABLE_VERBOSE_LOGS", "true")
+            legacyDebugSigning?.let { signingConfig = it }
         }
     }
     compileOptions {

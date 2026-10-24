@@ -33,3 +33,16 @@ internal fun appInfoReady(
 internal fun cacheClearVerified(beforeBytes: Long?, afterBytes: Long?, buttonDisabled: Boolean): Boolean =
     buttonDisabled || (afterBytes != null && afterBytes >= 0 &&
         (afterBytes == 0L || (beforeBytes != null && beforeBytes > 0 && afterBytes < beforeBytes)))
+
+/**
+ * Some OEM PackageManagers expose FLAG_STOPPED late (or not at all) even though Settings has
+ * completed the operation. A post-click, freshly updated target screen with a disabled force-stop
+ * button is an equally specific completion signal. All UI conditions are required together so a
+ * stale screen or a different app can never satisfy verification.
+ */
+internal fun forceStopVerified(
+    packageStopped: Boolean,
+    freshSettingsEvent: Boolean,
+    targetAppInfo: Boolean,
+    buttonDisabled: Boolean,
+): Boolean = packageStopped || (freshSettingsEvent && targetAppInfo && buttonDisabled)

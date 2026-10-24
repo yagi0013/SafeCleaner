@@ -13,7 +13,7 @@ class ForceStopHandler(
 ) {
     private sealed interface PostClickState {
         data object Confirmation : PostClickState
-        data object Stopped : PostClickState
+        data object Completed : PostClickState
     }
 
     suspend fun execute(packageName: String, onConfirming: () -> Unit): StepResult {
@@ -30,6 +30,7 @@ class ForceStopHandler(
         if (!button.isEnabled) return skipped(packageName, "強制停止：検出後、ボタンが無効になりました")
 
         AppLog.d("package=$packageName button=force_stop id=${candidate.viewIdResourceName} text=${candidate.text}")
+        val clickEventVersion = service.settingsEventVersion
         val clicked = service.awaitRoot(2_000) { root ->
             val freshButton = navigator.findForceStop(root)?.let(NodeFinder::clickable)
                 ?.takeIf { it.isEnabled } ?: return@awaitRoot null
@@ -41,11 +42,12 @@ class ForceStopHandler(
         }
         onConfirming()
 
-        // A disabled node alone may be stale. Verify the requested package's actual stopped flag.
+        // Observe the confirmation dialog and direct-stop OEM behavior in one loop. A disabled
+        // button is accepted only on the exact target page after a fresh post-click event.
         val postClickState = service.awaitRoot(5_000) { root ->
             when {
                 findSafeConfirmation(root) != null -> PostClickState.Confirmation
-                navigator.isPackageStopped(packageName) -> PostClickState.Stopped
+                isCompletionVerified(packageName, root, clickEventVersion) -> PostClickState.Completed
                 else -> null
             }
         }
@@ -65,19 +67,37 @@ class ForceStopHandler(
                     return recordStep(packageName, "force_stop", "confirmation", StepResult(StepStatus.FAILED, "強制停止：確認ダイアログのクリック受付を確認できません"))
                 }
             }
-            PostClickState.Stopped -> Unit
+            PostClickState.Completed -> Unit
             null -> {
                 return recordStep(packageName, "force_stop", "post_click", StepResult(StepStatus.FAILED, "強制停止：確認ダイアログも停止完了も確認できません"))
             }
         }
 
-        val stopped = service.awaitRoot(7_000) {
-            Unit.takeIf { navigator.isPackageStopped(packageName) }
+        val completed = postClickState == PostClickState.Completed || service.awaitRoot(5_000) { root ->
+            Unit.takeIf { isCompletionVerified(packageName, root, clickEventVersion) }
         } != null
-        AppLog.i("package=$packageName operation=force_stop stage=completion stopped=$stopped")
-        if (!stopped) return recordStep(packageName, "force_stop", "completion", StepResult(StepStatus.FAILED, "強制停止：クリック受付後、対象アプリの停止完了を確認できません"))
+        AppLog.i("package=$packageName operation=force_stop stage=completion verified=$completed")
+        if (!completed) return recordStep(packageName, "force_stop", "completion", StepResult(StepStatus.FAILED, "強制停止：クリック受付後、対象アプリの停止完了を確認できません"))
         AppLog.i("package=$packageName force_stop=SUCCESS")
         return StepResult(StepStatus.SUCCESS)
+    }
+
+    private fun isCompletionVerified(
+        packageName: String,
+        root: AccessibilityNodeInfo?,
+        clickEventVersion: Long,
+    ): Boolean {
+        val targetAppInfo = navigator.isTargetAppInfo(root)
+        val buttonDisabled = targetAppInfo && navigator.findForceStop(root)
+            ?.let(NodeFinder::clickable)?.isEnabled == false
+        val verifiedByUi = forceStopVerified(
+            packageStopped = false,
+            freshSettingsEvent = service.settingsEventVersion > clickEventVersion,
+            targetAppInfo = targetAppInfo,
+            buttonDisabled = buttonDisabled,
+        )
+        // Avoid another PackageManager query once the more immediate Settings UI signal is valid.
+        return verifiedByUi || navigator.isPackageStopped(packageName)
     }
 
     private fun findSafeConfirmation(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {

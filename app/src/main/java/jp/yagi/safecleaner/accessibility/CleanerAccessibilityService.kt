@@ -50,10 +50,16 @@ class CleanerAccessibilityService : AccessibilityService() {
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)) {
             settingsEventVersion++
         }
-        AppLog.d(
-            "event=${AccessibilityEvent.eventTypeToString(event.eventType)} " +
-                "package=${event.packageName} class=${event.className}",
-        )
+        // Recent Settings/ColorOS screens can emit a burst of content-change events while their
+        // Compose hierarchy settles. Logging every event allocates strings and writes to logcat on
+        // the accessibility main thread, which can make the very UI we are observing sluggish.
+        // Navigation/click events retain enough detail for diagnostics.
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            AppLog.d(
+                "event=${AccessibilityEvent.eventTypeToString(event.eventType)} " +
+                    "package=${event.packageName} class=${event.className}",
+            )
+        }
         eventSignal.trySend(Unit)
     }
 
@@ -197,7 +203,13 @@ class CleanerAccessibilityService : AccessibilityService() {
 
     internal suspend fun <T> awaitRoot(timeoutMs: Long, finder: (AccessibilityNodeInfo?) -> T?): T? {
         val deadline = android.os.SystemClock.uptimeMillis() + timeoutMs
+        var lastScanAt = 0L
         while (!cancelRequested) {
+            val beforeScan = android.os.SystemClock.uptimeMillis()
+            val scanDelay = MIN_ROOT_SCAN_INTERVAL_MS - (beforeScan - lastScanAt)
+            if (scanDelay > 0) delay(minOf(scanDelay, (deadline - beforeScan).coerceAtLeast(0L)))
+            if (android.os.SystemClock.uptimeMillis() >= deadline) return null
+            lastScanAt = android.os.SystemClock.uptimeMillis()
             finder(rootInActiveWindow)?.let { return it }
             val remaining = deadline - android.os.SystemClock.uptimeMillis()
             if (remaining <= 0) return null
@@ -260,5 +272,6 @@ class CleanerAccessibilityService : AccessibilityService() {
         internal val connectedService = MutableStateFlow<CleanerAccessibilityService?>(null)
         private const val CHANNEL_ID = "cleaner_progress"
         private const val PROGRESS_NOTIFICATION_ID = 1001
+        private const val MIN_ROOT_SCAN_INTERVAL_MS = 50L
     }
 }
